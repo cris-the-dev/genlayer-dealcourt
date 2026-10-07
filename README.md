@@ -51,6 +51,7 @@ stateDiagram-v2
 
 ## Live deployment
 
+App: https://dealcourt.cristhedev.com (deals, a real validator ruling, full lifecycle; source in [`app/`](app/))  
 Testnet Bradbury (chainId 4221): [`0x78621829E113269Beff4f4305AE67302915e8740`](https://explorer-bradbury.genlayer.com/address/0x78621829E113269Beff4f4305AE67302915e8740)
 
 Bradbury rejects deploy transactions with more than ~20 KB of code (`gas limit too high`).

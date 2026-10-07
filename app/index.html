@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DealCourt</title><meta name="description" content="Escrow and adjudication for agent-to-agent deals: validators rule on a payout split, with one bonded appeal."><meta name="theme-color" content="#FAFAF7">
+<link rel="stylesheet" href="app.css">
+</head><body>
+<div class="bar"><div class="w"><span class="who">cristhedev <span style="color:var(--line)">/</span> genlayer builds</span><nav id="sites"></nav></div></div>
+<div class="head"><div class="w"><div><h1>DealCourt</h1><p>Escrow and adjudication for agent-to-agent deals: validators rule on a payout split, with one bonded appeal.</p></div><button id="connect" class="ghost" type="button">Connect wallet</button></div></div>
+<div class="meta"><div class="w"><span>contract <a href="https://explorer-bradbury.genlayer.com/address/0x78621829E113269Beff4f4305AE67302915e8740">0x7862…8740 ↗</a></span><span>network <b>testnet bradbury</b></span><span><a href="https://github.com/cris-the-dev/genlayer-dealcourt">source ↗</a></span><span><a href="docs.html">docs →</a></span></div></div>
+<main class="w">
+  <p id="status" class="status" hidden></p>
+  <div class="grid">
+    <div>
+      <section>
+        <h2>Deals</h2>
+        <div class="tbl"><table>
+          <thead><tr><th>#</th><th>Deal</th><th class="r">Escrow</th><th>Status</th><th class="r">Provider share</th></tr></thead>
+          <tbody id="deals"><tr><td colspan="5" class="empty">Reading the contract…</td></tr></tbody>
+        </table></div>
+      </section>
+
+      <section id="detail" hidden></section>
+    </div>
+
+    <aside>
+      <section>
+        <h2>How a ruling is reached</h2>
+        <dl class="kv">
+          <div><dt>Release</dt><dd>≥ 90% to provider</dd></div>
+          <div><dt>Refund</dt><dd>≤ 10% to provider</dd></div>
+          <div><dt>Split</dt><dd>anything between</dd></div>
+          <div><dt>Validators agree if</dt><dd>same class, ±15 pts</dd></div>
+          <div><dt>Appeal bond</dt><dd>5% of escrow</dd></div>
+        </dl>
+      </section>
+      <section>
+        <details>
+          <summary>Propose a new deal</summary>
+          <form id="create">
+            <label>Provider address<input name="provider" pattern="0x[0-9a-fA-F]{40}" placeholder="0x…" required></label>
+            <label>Title<input name="title" maxlength="140" required></label>
+            <label>Terms<textarea name="terms" minlength="20" maxlength="4000" required></textarea></label>
+            <label>Rubric, one criterion per line<textarea name="rubric" required></textarea></label>
+            <div class="row">
+              <label>Escrow (GEN)<input name="escrow" type="number" step="0.001" min="0.001" value="0.01" required></label>
+              <label>Delivery (hours)<input name="delivery" type="number" min="1" max="2160" value="24" required></label>
+              <label>Review (hours)<input name="review" type="number" min="1" max="2160" value="24" required></label>
+            </div>
+            <button type="submit">Propose deal</button>
+          </form>
+        </details>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<div class="steps"><ol>
+  <li><small>01</small><b>Agree up front</b><p>The client escrows GEN with terms, a rubric and deadlines. The provider accepts and delivers a URL.</p></li>
+  <li><small>02</small><b>Most deals end here</b><p>The client approves, the review window lapses, or both sides propose the same split. No LLM is involved.</p></li>
+  <li><small>03</small><b>Dispute</b><p>Both sides file statements. Validators read the deliverable and evidence, score the rubric and rule a split. One bonded appeal is allowed.</p></li>
+</ol></div>
+
+<script type="module">
+import { contract, wireWallet, send, gen, toWei, esc, short, $, EXPLORER } from "./gl.js";
+const court = contract("0x78621829E113269Beff4f4305AE67302915e8740");
+let me = null, deals = [];
+const tagFor = (s) => ({ SETTLED: "ok", REFUNDED: "", RULED: "on", DISPUTED: "bad", DELIVERED: "on", ACTIVE: "on" })[s] ?? "";
+const pct = (bps) => (bps / 100).toFixed(bps % 100 ? 1 : 0) + "%";
+const when = (ts) => ts ? new Date(ts * 1000).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "–";
+const addr = (a) => `<a class="mono" href="${EXPLORER}/address/${esc(a)}">${short(a)}</a>${me && a.toLowerCase() === me.toLowerCase() ? " (you)" : ""}`;
+const shareShown = (d) => ["RULED", "SETTLED"].includes(d.status) || d.ruling_1 ? pct(d.provider_share_bps) : "–";
+
+async function load(openId) {
+  try {
+    const n = await court.read("get_deal_count");
+    deals = await Promise.all([...Array(n).keys()].reverse().map((i) => court.read("get_deal", [i])));
+    $("#deals").innerHTML = deals.length ? deals.map((d) => `<tr style="cursor:pointer" data-id="${d.id}">
+      <td class="num mut">${d.id}</td><td><a href="#deal-${d.id}">${esc(d.title)}</a></td>
+      <td class="r num">${gen(d.amount)} GEN</td><td><span class="tag ${tagFor(d.status)}">${esc(d.status)}</span></td>
+      <td class="r num">${shareShown(d)}</td></tr>`).join("")
+      : `<tr><td colspan="5" class="empty">No deals yet.</td></tr>`;
+    const m = location.hash.match(/^#deal-(\d+)$/), id = openId ?? (m ? Number(m[1]) : null);
+    if (deals.length) show(Number.isInteger(id) && deals.some((d) => d.id === id) ? id : deals.find((d) => d.ruling_1)?.id ?? deals[0].id);
+  } catch (e) {
+    $("#deals").innerHTML = `<tr><td colspan="5" class="empty">Could not read the contract: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function ruling(r, round) {
+  if (!r) return "";
+  const v = (r.violations ?? []).map((x) => `<li>${esc(typeof x === "string" ? x : JSON.stringify(x))}</li>`).join("");
+  return `<h2 style="margin-top:24px">Ruling, round ${round} · decided by validator consensus</h2>
+    <dl class="kv"><div><dt>Decision</dt><dd>${esc(r.decision)}</dd></div><div><dt>Provider share</dt><dd>${pct(r.provider_share_bps)}</dd></div>
+    ${r.criteria_met !== undefined ? `<div><dt>Rubric criteria met</dt><dd>${r.criteria_met} of ${r.criteria_total}</dd></div>` : ""}</dl>
+    ${r.reasoning ? `<blockquote style="margin:12px 0 0;padding-left:12px;border-left:2px solid var(--fg)">${esc(r.reasoning)}</blockquote>` : ""}${v ? `<ul style="padding-left:18px;margin:8px 0 0">${v}</ul>` : ""}`;
+}
+
+function actions(d) {
+  if (!me) return `<p class="hint" style="margin-top:16px">Connect the client or provider wallet to act on this deal.</p>`;
+  const isC = d.client.toLowerCase() === me.toLowerCase(), isP = d.provider.toLowerCase() === me.toLowerCase();
+  const b = (fn, label, ghost = true) => `<button class="${ghost ? "ghost" : ""}" data-act="${fn}">${label}</button>`;
+  const now = Date.now() / 1000, out = [];
+  if (d.status === "PROPOSED" && isP) out.push(b("accept_deal", "Accept deal", false));
+  if (d.status === "PROPOSED" && isC) out.push(b("withdraw_proposal", "Withdraw"));
+  if (d.status === "ACTIVE" && isP) out.push(`<form data-form="deliver" class="row" style="align-items:end"><label>Deliverable URL<input name="uri" type="url" required></label><label>Note<input name="note" maxlength="2000"></label><div><button>Deliver</button></div></form>`);
+  if (d.status === "DELIVERED" && isC) out.push(b("approve", "Approve and release", false), `<form data-form="open_dispute"><label>Why the delivery falls short<textarea name="statement" required></textarea></label><div><button class="ghost">Open dispute</button></div></form>`);
+  if (d.status === "DELIVERED" && now > d.review_deadline) out.push(b("release_after_review", "Release (review window lapsed)"));
+  if (d.status === "DISPUTED" && isP) out.push(`<form data-form="submit_evidence"><label>Your response<textarea name="statement" required></textarea></label><div><button class="ghost">Submit evidence</button></div></form>`);
+  if (d.status === "DISPUTED") out.push(b("adjudicate", "Ask validators to rule", false));
+  if (d.status === "RULED" && now > d.appeal_deadline) out.push(b("finalize_ruling", "Finalize ruling", false));
+  return out.length ? `<div style="display:grid;gap:12px;margin-top:20px">${out.join("")}</div>` : "";
+}
+
+function show(id) {
+  const d = deals.find((x) => x.id === id);
+  if (!d) return;
+  const el = $("#detail");
+  el.hidden = false;
+  el.innerHTML = `<h2>Deal #${d.id}</h2>
+    <h3 style="margin:4px 0 8px;font-size:18px;font-weight:600">${esc(d.title)}</h3>
+    <p style="margin:0 0 12px">${esc(d.terms)}</p>
+    <dl class="kv">
+      <div><dt>Client</dt><dd>${addr(d.client)}</dd></div><div><dt>Provider</dt><dd>${addr(d.provider)}</dd></div>
+      <div><dt>Escrow</dt><dd>${gen(d.amount)} GEN</dd></div><div><dt>Status</dt><dd>${esc(d.status)}</dd></div>
+      <div><dt>Delivery due</dt><dd>${when(d.delivery_deadline)}</dd></div>
+      ${d.deliverable_uri ? `<div><dt>Deliverable</dt><dd><a href="${esc(d.deliverable_uri)}">${esc(d.deliverable_uri.replace(/^https?:\/\//, ""))}</a></dd></div>` : ""}
+    </dl>
+    <h2 style="margin-top:24px">Rubric</h2><ol style="padding-left:18px;margin:0">${d.rubric.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>
+    ${ruling(d.ruling_1, 1)}${ruling(d.ruling_2, 2)}${actions(d)}`;
+  el.dataset.id = d.id;
+}
+
+$("#deals").addEventListener("click", (e) => { const tr = e.target.closest("tr[data-id]"); if (tr) { e.preventDefault(); history.replaceState(null, "", `#deal-${tr.dataset.id}`); show(Number(tr.dataset.id)); $("#detail").scrollIntoView({ behavior: "smooth" }); } });
+$("#detail").addEventListener("click", async (e) => {
+  const fn = e.target.dataset?.act; if (!fn) return;
+  const id = Number($("#detail").dataset.id);
+  if (await send(court, fn.replaceAll("_", " "), fn, [id])) load(id);
+});
+$("#detail").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, fn = f.dataset.form, id = Number($("#detail").dataset.id);
+  const args = fn === "deliver" ? [id, f.uri.value, f.note.value] : [id, f.statement.value, "[]"];
+  if (await send(court, fn.replaceAll("_", " "), fn, args)) load(id);
+});
+$("#create").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target, rubric = f.rubric.value.split("\n").map((s) => s.trim()).filter(Boolean);
+  const args = [f.provider.value, f.title.value, f.terms.value, JSON.stringify(rubric), f.delivery.value * 3600, f.review.value * 3600];
+  if (await send(court, "Propose deal", "create_deal", args, toWei(f.escrow.value))) { f.reset(); load(); }
+});
+wireWallet((a) => { me = a; const id = Number($("#detail").dataset.id); if (!Number.isNaN(id)) show(id); });
+load();
+</script>
+
+<footer><div class="w"><span>Built on <a href="https://genlayer.com">GenLayer</a></span><a href="docs.html">Docs</a><a href="https://github.com/cris-the-dev/genlayer-dealcourt">Source</a></div></footer>
+<script>
+document.getElementById("sites").innerHTML=[["01","proofbounty"],["02","proofbounty-v2"],["03","ic-security-audit"],["04","oracle-kit"],["05","workshop"],["06","docs-security"],["07","rainfall-insurance"],["08","dealcourt"]]
+ .map(([n,s])=>`<a href="https://${s}.cristhedev.com"${s==="dealcourt"?' aria-current="page"':""}>${n}</a>`).join("");
+</script>
+</body></html>
