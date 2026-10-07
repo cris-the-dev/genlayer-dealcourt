@@ -14,3 +14,8 @@ jobs:
       - run: pip install -r requirements.txt
       - run: genvm-lint check contracts/deal_court.py
       - run: pytest tests/direct/ -v
+      - name: Direct tests against the deployed (shrunk) code
+        run: |
+          python deploy/shrink.py contracts/deal_court.py /tmp/deal_court.py --pack
+          cp /tmp/deal_court.py contracts/deal_court.py
+          pytest tests/direct/ -q

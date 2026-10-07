@@ -49,6 +49,19 @@ stateDiagram-v2
     RULED --> SETTLED: appeal (one, bonded) / mutual split
 ```
 
+## Live deployment
+
+Testnet Bradbury (chainId 4221): [`0x78621829E113269Beff4f4305AE67302915e8740`](https://explorer-bradbury.genlayer.com/address/0x78621829E113269Beff4f4305AE67302915e8740)
+
+Bradbury rejects deploy transactions with more than ~20 KB of code (`gas limit too high`).
+The deployed code was produced from `contracts/` with [`deploy/shrink.py`](deploy/shrink.py), which
+removes docstrings and comments and wraps the result in a zlib self-extracting stub. It asserts the result has the same AST as the source,
+and the full direct suite passes against it. To reproduce it byte-for-byte:
+
+```bash
+python deploy/shrink.py contracts/deal_court.py build/deal_court.py --pack
+```
+
 ## API
 
 | Method | Who | Notes |
