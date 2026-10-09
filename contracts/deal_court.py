@@ -589,8 +589,11 @@ class DealCourt(gl.Contract):
         if deal.appealed:
             raise gl.vm.UserError(f"{ERR_EXPECTED} Ruling was already appealed")
         bps = int(deal.provider_share_bps)
-        if (role == ROLE_PROVIDER and bps == BPS) or (role == ROLE_CLIENT and bps == 0):
-            raise gl.vm.UserError(f"{ERR_EXPECTED} You received the full amount")
+        # Only the party that received the smaller share may use the single
+        # appeal, so the favoured party cannot burn it first. At an exact 50/50
+        # split neither side is favoured and either may appeal.
+        if (role == ROLE_PROVIDER and bps > BPS // 2) or (role == ROLE_CLIENT and bps < BPS // 2):
+            raise gl.vm.UserError(f"{ERR_EXPECTED} Only the party that received the smaller share can appeal")
         min_bond = max(1, int(deal.amount) * APPEAL_BOND_BPS // BPS)
         if int(gl.message.value) < min_bond:
             raise gl.vm.UserError(f"{ERR_EXPECTED} Appeal bond must be at least 5% of escrow")

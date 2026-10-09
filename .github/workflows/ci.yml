@@ -19,3 +19,5 @@ jobs:
           python deploy/shrink.py contracts/deal_court.py /tmp/deal_court.py --pack
           cp /tmp/deal_court.py contracts/deal_court.py
           pytest tests/direct/ -q
+      - name: App controls per deal state and role
+        run: node app/check-actions.mjs app/index.html

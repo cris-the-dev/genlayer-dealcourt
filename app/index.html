@@ -5,7 +5,7 @@
 </head><body>
 <div class="bar"><div class="w"><span class="who">cristhedev <span style="color:var(--line)">/</span> genlayer builds</span><nav id="sites"></nav></div></div>
 <div class="head"><div class="w"><div><h1>DealCourt</h1><p>Escrow and adjudication for agent-to-agent deals: validators rule on a payout split, with one bonded appeal.</p></div><button id="connect" class="ghost" type="button">Connect wallet</button></div></div>
-<div class="meta"><div class="w"><span>contract <a href="https://explorer-bradbury.genlayer.com/address/0x78621829E113269Beff4f4305AE67302915e8740">0x7862…8740 ↗</a></span><span>network <b>testnet bradbury</b></span><span><a href="https://github.com/cris-the-dev/genlayer-dealcourt">source ↗</a></span><span><a href="docs.html">docs →</a></span></div></div>
+<div class="meta"><div class="w"><span>contract <a href="https://explorer-bradbury.genlayer.com/address/0x1d571F8B723aeBc8B9Ec96355a00e303DeaF60ed">0x1d57…60ed ↗</a></span><span>network <b>testnet bradbury</b></span><span><a href="https://github.com/cris-the-dev/genlayer-dealcourt">source ↗</a></span><span><a href="docs.html">docs →</a></span></div></div>
 <main class="w">
   <p id="status" class="status" hidden></p>
   <div class="grid">
@@ -29,7 +29,7 @@
           <div><dt>Refund</dt><dd>≤ 10% to provider</dd></div>
           <div><dt>Split</dt><dd>anything between</dd></div>
           <div><dt>Validators agree if</dt><dd>same class, ±15 pts</dd></div>
-          <div><dt>Appeal bond</dt><dd>5% of escrow</dd></div>
+          <div><dt>Appeal</dt><dd>once, by the smaller share</dd></div><div><dt>Appeal bond</dt><dd>5% of escrow</dd></div>
         </dl>
       </section>
       <section>
@@ -60,8 +60,8 @@
 </ol></div>
 
 <script type="module">
-import { contract, wireWallet, send, gen, toWei, esc, short, $, EXPLORER } from "./gl.js";
-const court = contract("0x78621829E113269Beff4f4305AE67302915e8740");
+import { contract, wireWallet, send, status, gen, toWei, esc, short, $, EXPLORER } from "./gl.js";
+const court = contract("0x1d571F8B723aeBc8B9Ec96355a00e303DeaF60ed");
 let me = null, deals = [];
 const tagFor = (s) => ({ SETTLED: "ok", REFUNDED: "", RULED: "on", DISPUTED: "bad", DELIVERED: "on", ACTIVE: "on" })[s] ?? "";
 const pct = (bps) => (bps / 100).toFixed(bps % 100 ? 1 : 0) + "%";
@@ -94,25 +94,64 @@ function ruling(r, round) {
     ${r.reasoning ? `<blockquote style="margin:12px 0 0;padding-left:12px;border-left:2px solid var(--fg)">${esc(r.reasoning)}</blockquote>` : ""}${v ? `<ul style="padding-left:18px;margin:8px 0 0">${v}</ul>` : ""}`;
 }
 
-function actions(d) {
+const urlField = (name = "uris") => `<label>Evidence links, one per line (up to 3)<textarea name="${name}" rows="2" placeholder="https://…"></textarea></label>`;
+const urisOf = (f) => JSON.stringify(f.uris.value.split("\n").map((s) => s.trim()).filter(Boolean));
+const bondOf = (d) => { const b = BigInt(d.amount) * 500n / 10000n; return b > 0n ? b : 1n; };
+
+function actions(d, ev, props) {
   if (!me) return `<p class="hint" style="margin-top:16px">Connect the client or provider wallet to act on this deal.</p>`;
   const isC = d.client.toLowerCase() === me.toLowerCase(), isP = d.provider.toLowerCase() === me.toLowerCase();
-  const b = (fn, label, ghost = true) => `<button class="${ghost ? "ghost" : ""}" data-act="${fn}">${label}</button>`;
+  if (!isC && !isP) return `<p class="hint" style="margin-top:16px">You are not a party to this deal.</p>`;
+  const b = (fn, label, ghost = true, disabled = "") => `<button class="${ghost ? "ghost" : ""}" data-act="${fn}"${disabled ? ` disabled title="${esc(disabled)}"` : ""}>${label}</button>`;
   const now = Date.now() / 1000, out = [];
-  if (d.status === "PROPOSED" && isP) out.push(b("accept_deal", "Accept deal", false));
-  if (d.status === "PROPOSED" && isC) out.push(b("withdraw_proposal", "Withdraw"));
-  if (d.status === "ACTIVE" && isP) out.push(`<form data-form="deliver" class="row" style="align-items:end"><label>Deliverable URL<input name="uri" type="url" required></label><label>Note<input name="note" maxlength="2000"></label><div><button>Deliver</button></div></form>`);
-  if (d.status === "DELIVERED" && isC) out.push(b("approve", "Approve and release", false), `<form data-form="open_dispute"><label>Why the delivery falls short<textarea name="statement" required></textarea></label><div><button class="ghost">Open dispute</button></div></form>`);
-  if (d.status === "DELIVERED" && now > d.review_deadline) out.push(b("release_after_review", "Release (review window lapsed)"));
-  if (d.status === "DISPUTED" && isP) out.push(`<form data-form="submit_evidence"><label>Your response<textarea name="statement" required></textarea></label><div><button class="ghost">Submit evidence</button></div></form>`);
-  if (d.status === "DISPUTED") out.push(b("adjudicate", "Ask validators to rule", false));
-  if (d.status === "RULED" && now > d.appeal_deadline) out.push(b("finalize_ruling", "Finalize ruling", false));
+  if (d.status === "PROPOSED" && isP && now <= d.delivery_deadline) out.push(b("accept_deal", "Accept deal", false));
+  if (d.status === "PROPOSED" && isC) out.push(b("withdraw_proposal", "Withdraw proposal"));
+  if (["PROPOSED", "ACTIVE"].includes(d.status) && isC)
+    out.push(b("reclaim_undelivered", "Reclaim escrow (not delivered)", true, now <= d.delivery_deadline ? `Available after ${when(d.delivery_deadline)}` : ""));
+  if (d.status === "ACTIVE" && isP && now <= d.delivery_deadline)
+    out.push(`<form data-form="deliver" class="row" style="align-items:end"><label>Deliverable URL<input name="uri" type="url" required></label><label>Note<input name="note" maxlength="2000"></label><div><button>Deliver</button></div></form>`);
+  if (d.status === "DELIVERED" && isC && now <= d.review_deadline) {
+    out.push(b("approve", "Approve and release", false));
+    out.push(`<form data-form="open_dispute"><label>Why the delivery falls short<textarea name="statement" minlength="10" maxlength="2000" required></textarea></label>${urlField()}<div><button class="ghost">Open dispute</button></div></form>`);
+  }
+  if (d.status === "DELIVERED" && now > d.review_deadline) out.push(b("release_after_review", "Release (review window lapsed)", false));
+  if (d.status === "DISPUTED") {
+    const providerFiled = !!ev.provider, evidenceOpen = now <= d.evidence_deadline;
+    if (isP && !providerFiled && evidenceOpen)
+      out.push(`<form data-form="submit_evidence"><label>Your response<textarea name="statement" minlength="10" maxlength="2000" required></textarea></label>${urlField()}<div><button class="ghost">Submit evidence</button></div></form>`);
+    const ready = providerFiled || !evidenceOpen;
+    out.push(b("adjudicate", "Ask validators to rule", false, ready ? "" : `Waiting for the provider's evidence or the deadline (${when(d.evidence_deadline)})`));
+    if (!ready) out.push(`<p class="hint">Validators can rule once both sides have filed, or after ${when(d.evidence_deadline)}.</p>`);
+  }
+  if (d.status === "RULED") {
+    const bps = d.provider_share_bps, smaller = bps === 5000 || (isP ? bps < 5000 : bps > 5000);
+    if (!d.appealed && now <= d.appeal_deadline && smaller)
+      out.push(`<form data-form="appeal"><label>Grounds for appeal (replaces your earlier filing)<textarea name="statement" minlength="10" maxlength="2000" required></textarea></label>${urlField()}
+        <label>Bond (GEN, at least 5% of escrow)<input name="bond" type="number" step="any" min="${gen(bondOf(d), 18)}" value="${gen(bondOf(d), 18)}" required></label>
+        <p class="hint">The bond comes back if the appeal moves the split at least 10 points your way; otherwise it goes to the other party.</p>
+        <div><button class="ghost">Appeal with bond</button></div></form>`);
+    else if (!d.appealed && now <= d.appeal_deadline) out.push(`<p class="hint">Only the party that received the smaller share can appeal, until ${when(d.appeal_deadline)}.</p>`);
+    out.push(b("finalize_ruling", "Finalize ruling", false, now <= d.appeal_deadline ? `Available after ${when(d.appeal_deadline)}` : ""));
+  }
+  if (["DELIVERED", "DISPUTED", "RULED"].includes(d.status)) {
+    const mine = isC ? props.client : props.provider, theirs = isC ? props.provider : props.client;
+    out.push(`<form data-form="propose_settlement" class="row" style="align-items:end">
+      <label>Settle by agreement: provider share (%)<input name="share" type="number" min="0" max="100" step="0.01" value="${theirs >= 0 ? theirs / 100 : mine >= 0 ? mine / 100 : 50}" required></label>
+      <div><button class="ghost">Propose split</button></div></form>
+      <p class="hint">Your proposal: ${mine >= 0 ? pct(mine) : "none"}. Other side: ${theirs >= 0 ? pct(theirs) : "none"}. Matching proposals settle at once, with no AI.</p>`);
+  }
   return out.length ? `<div style="display:grid;gap:12px;margin-top:20px">${out.join("")}</div>` : "";
 }
 
-function show(id) {
+function filings(ev) {
+  const one = (role, e) => e ? `<div style="margin-top:8px"><b style="font-weight:600;text-transform:capitalize">${role}</b><p style="margin:2px 0">${esc(e.statement)}</p>${(e.uris ?? []).map((u) => `<a class="mono" href="${esc(u)}">${esc(u.replace(/^https?:\/\//, ""))}</a>`).join("<br>")}</div>` : "";
+  return ev.client || ev.provider ? `<h2 style="margin-top:24px">Filings</h2>${one("client", ev.client)}${one("provider", ev.provider)}` : "";
+}
+
+async function show(id) {
   const d = deals.find((x) => x.id === id);
   if (!d) return;
+  const [ev, pc, pp] = await Promise.all([court.read("get_evidence", [id]), court.read("get_proposal", [id, "client"]), court.read("get_proposal", [id, "provider"])]);
   const el = $("#detail");
   el.hidden = false;
   el.innerHTML = `<h2>Deal #${d.id}</h2>
@@ -125,7 +164,7 @@ function show(id) {
       ${d.deliverable_uri ? `<div><dt>Deliverable</dt><dd><a href="${esc(d.deliverable_uri)}">${esc(d.deliverable_uri.replace(/^https?:\/\//, ""))}</a></dd></div>` : ""}
     </dl>
     <h2 style="margin-top:24px">Rubric</h2><ol style="padding-left:18px;margin:0">${d.rubric.map((c) => `<li>${esc(c)}</li>`).join("")}</ol>
-    ${ruling(d.ruling_1, 1)}${ruling(d.ruling_2, 2)}${actions(d)}`;
+    ${filings(ev)}${ruling(d.ruling_1, 1)}${ruling(d.ruling_2, 2)}${actions(d, ev, { client: pc, provider: pp })}`;
   el.dataset.id = d.id;
 }
 
@@ -138,8 +177,17 @@ $("#detail").addEventListener("click", async (e) => {
 $("#detail").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = e.target, fn = f.dataset.form, id = Number($("#detail").dataset.id);
-  const args = fn === "deliver" ? [id, f.uri.value, f.note.value] : [id, f.statement.value, "[]"];
-  if (await send(court, fn.replaceAll("_", " "), fn, args)) load(id);
+  const d = deals.find((x) => x.id === id);
+  let args, value = 0n;
+  if (fn === "deliver") args = [id, f.uri.value, f.note.value];
+  else if (fn === "propose_settlement") args = [id, Math.round(Number(f.share.value) * 100)];
+  else {
+    const uris = urisOf(f);
+    if (JSON.parse(uris).length > 3) return status("Use at most 3 evidence links.", true);
+    args = [id, f.statement.value, uris];
+    if (fn === "appeal") { value = toWei(f.bond.value); if (value < bondOf(d)) return status("The bond must be at least 5% of the escrow.", true); }
+  }
+  if (await send(court, fn.replaceAll("_", " "), fn, args, value)) load(id);
 });
 $("#create").addEventListener("submit", async (e) => {
   e.preventDefault();

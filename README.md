@@ -28,7 +28,7 @@ LLM consensus.
 | **Error classes** | `[EXPECTED]` / `[EXTERNAL]` must match exactly, `[TRANSIENT]` agree-to-fail, `[LLM_ERROR]` always disagree (forces rotation) — the official GenLayer pattern. |
 | **Dead links can't stall** | Unreachable evidence becomes `[UNAVAILABLE]` instead of reverting, so a party cannot block adjudication. |
 | **Prompt-injection hardening** | All party-written text is fenced with `<<< >>>`, delimiters inside it are neutralised, and the rules state party text is evidence, never instructions. The LLM outputs a share; money flow is computed deterministically. |
-| **One bonded appeal** | The party that received less can appeal once with new evidence and a 5 % bond. The appeal panel sees the prior ruling as context. The bond is refunded only if the split moves ≥ 10 points in the appellant's favour, otherwise it compensates the counterparty. |
+| **One bonded appeal** | Only the party that received the smaller share can appeal (either side at an exact 50/50), once, with new evidence and a 5 % bond, so the favoured side cannot use up the appeal first. The appeal panel sees the prior ruling as context. The bond is refunded only if the split moves ≥ 10 points in the appellant's favour, otherwise it compensates the counterparty. |
 | **Exact accounting** | `provider = amount * bps // 10000`, `client = amount - provider` — no dust lost (tested with an odd amount). |
 | **Reputation write-back** | `completed`, `disputes_won`, `disputes_lost` per address; providers who accept and never deliver take a loss. |
 
@@ -52,7 +52,7 @@ stateDiagram-v2
 ## Live deployment
 
 App: https://dealcourt.cristhedev.com (deals, a real validator ruling, full lifecycle; source in [`app/`](app/))  
-Testnet Bradbury (chainId 4221): [`0x78621829E113269Beff4f4305AE67302915e8740`](https://explorer-bradbury.genlayer.com/address/0x78621829E113269Beff4f4305AE67302915e8740)
+Testnet Bradbury (chainId 4221): [`0x1d571F8B723aeBc8B9Ec96355a00e303DeaF60ed`](https://explorer-bradbury.genlayer.com/address/0x1d571F8B723aeBc8B9Ec96355a00e303DeaF60ed)
 
 Bradbury rejects deploy transactions with more than ~20 KB of code (`gas limit too high`).
 The deployed code was produced from `contracts/` with [`deploy/shrink.py`](deploy/shrink.py), which
@@ -78,7 +78,7 @@ python deploy/shrink.py contracts/deal_court.py build/deal_court.py --pack
 | `open_dispute(id, statement, uris_json)` | client | inside review window; ≤3 evidence URLs |
 | `submit_evidence(id, statement, uris_json)` | provider | once, inside 3-day evidence window |
 | `adjudicate(id)` | anyone | after both filed or window closed |
-| `appeal(id, statement, uris_json)` payable | losing party | once, bond ≥ 5 %, within 2 days |
+| `appeal(id, statement, uris_json)` payable | party with the smaller share (either at 50/50) | once, bond ≥ 5 %, within 2 days |
 | `finalize_ruling(id)` | anyone | after appeal window |
 | `get_deal`, `get_evidence`, `get_reputation`, `get_proposal`, `get_deal_count` | view | |
 
@@ -104,15 +104,15 @@ python deploy/shrink.py contracts/deal_court.py build/deal_court.py --pack
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 genvm-lint check contracts/deal_court.py
-pytest tests/direct/ -v          # 32 tests
+pytest tests/direct/ -v          # 34 tests
 gltest tests/integration/ -v -s  # needs Studio / testnet
 ```
 
-## Tests (32 direct)
+## Tests (34 direct)
 
 - **Lifecycle**: escrow, validation, permissions, withdraw, approve, silence-is-consent, reclaim + reputation penalty, late delivery, mutual split, outsider block, no-dust split.
 - **Events**: regression test proving indexed event fields are not swapped (the SDK binds positional indexed args alphabetically — see note in the contract).
-- **Disputes**: windows, evidence once, adjudication with missing evidence, RELEASE/SPLIT/REFUND payouts + reputation, successful appeal (bond refunded), failed appeal (bond forfeited), appeal eligibility, prior-ruling context in appeal prompt, settlement after ruling, dead evidence links, prompt fencing, share parsing (`"75%"`).
+- **Disputes**: windows, evidence once, adjudication with missing evidence, RELEASE/SPLIT/REFUND payouts + reputation, successful appeal (bond refunded), failed appeal (bond forfeited), appeal eligibility, favoured party cannot consume the appeal (regression), either party may appeal a 50/50 split, prior-ruling context in appeal prompt, settlement after ruling, dead evidence links, prompt fencing, share parsing (`"75%"`).
 - **Consensus (validator replay)**: accepts within tolerance; rejects >15 pt gap, class flip at the 90 % boundary, criteria disagreement, inconsistent/out-of-range leader payloads, and LLM errors.
 
 ## Reuse

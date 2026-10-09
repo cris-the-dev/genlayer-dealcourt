@@ -135,7 +135,7 @@ def test_appeal_rules(disputed, direct_vm, court, direct_alice, direct_bob, dire
 
     direct_vm.sender = direct_alice
     direct_vm.value = ESCROW // 20
-    with direct_vm.expect_revert("received the full amount"):
+    with direct_vm.expect_revert("smaller share"):
         court.appeal(disputed, "client got everything already", "[]")
     direct_vm.sender = direct_charlie
     with direct_vm.expect_revert("Not a party"):
@@ -150,6 +150,46 @@ def test_appeal_rules(disputed, direct_vm, court, direct_alice, direct_bob, dire
     with direct_vm.expect_revert("Appeal period closed"):
         court.appeal(disputed, "too late to appeal now", "[]")
     direct_vm.value = 0
+
+
+def test_favoured_party_cannot_consume_the_appeal(disputed, direct_vm, court, direct_alice, direct_bob, ledger):
+    """Regression: after a partial ruling the favoured side must not be able to
+    burn the single appeal before the disadvantaged side uses it."""
+    direct_vm.warp("2030-01-06T00:00:00Z")
+    _rule(direct_vm, court, disputed, 70)  # provider (bob) favoured, client (alice) gets 30%
+
+    direct_vm.sender = direct_bob
+    direct_vm.value = ESCROW // 20
+    with direct_vm.expect_revert("smaller share"):
+        court.appeal(disputed, "Pre-empting the client's appeal.", "[]")
+    assert court.get_deal(disputed)["appealed"] is False
+
+    direct_vm.clear_mocks()
+    mock_docs(direct_vm)
+    mock_ruling(direct_vm, 40)  # appeal moves 30 points toward the client
+    ledger.clear()
+    direct_vm.sender = direct_alice
+    ruling = court.appeal(disputed, "Section 3 has no runnable code, see link.", EVIDENCE)
+    direct_vm.value = 0
+
+    assert ruling["provider_share_bps"] == 4000
+    d = court.get_deal(disputed)
+    assert d["appealed"] is True and d["status"] == "SETTLED"
+    assert ledger.paid_to(direct_alice) == ESCROW // 20 + ESCROW * 6 // 10  # bond back + 60%
+    assert ledger.paid_to(direct_bob) == ESCROW * 4 // 10
+
+
+def test_either_party_may_appeal_an_even_split(disputed, direct_vm, court, direct_bob):
+    direct_vm.warp("2030-01-06T00:00:00Z")
+    _rule(direct_vm, court, disputed, 50)
+    direct_vm.clear_mocks()
+    mock_docs(direct_vm)
+    mock_ruling(direct_vm, 50)
+    direct_vm.sender = direct_bob
+    direct_vm.value = ESCROW // 20
+    court.appeal(disputed, "The split ignores the delivered draft.", "[]")
+    direct_vm.value = 0
+    assert court.get_deal(disputed)["appealed"] is True
 
 
 def test_appeal_prompt_carries_prior_ruling(disputed, direct_vm, court, direct_bob):

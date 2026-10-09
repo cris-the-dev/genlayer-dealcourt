@@ -7,6 +7,7 @@ Files:
 - `index.html` — the page
 - `gl.js` — wallet + read/write helpers
 - `app.css` — shared styles
+- `check-actions.mjs` — asserts which controls each deal state shows to each role (`node app/check-actions.mjs app/index.html`, runs in CI)
 - `genlayer.js` — not committed; a browser bundle of `genlayer-js@1.1.8`:
 
 ```bash
